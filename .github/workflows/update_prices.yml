@@ -1,0 +1,10 @@
+name: Update Prices
+on:
+  schedule:
+    - cron: '*/1 * * * *'  # Каждую минуту
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: echo "Здесь код для обновления данных"
