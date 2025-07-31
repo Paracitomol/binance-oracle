@@ -1,3 +1,9 @@
+@app.route('/')
+def home():
+    return jsonify({"message": "Use /prices to get crypto data"})
+
+@app.route('/prices')
+def get_prices():
 from flask import Flask, jsonify
 from binance.client import Client
 from dotenv import load_dotenv
