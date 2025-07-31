@@ -1,0 +1,3 @@
+﻿flask
+python-binance
+python-dotenv 
