@@ -1,14 +1,16 @@
-name: Deploy
-on: [push]
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: amondnet/vercel-action@v20
         with:
-          python-version: '3.8'
-      - run: pip install -r requirements.txt
-      - run: python app.py &
-      - run: sleep 5
-      - run: curl http://localhost:3000/prices
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
