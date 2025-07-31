@@ -1,19 +1,19 @@
-from flask import Flask, jsonify
+from flask import Flask, render_template_string
 from binance.client import Client
 from dotenv import load_dotenv
 import os
 import time
+import threading
 
-# Загрузка переменных окружения
 load_dotenv()
 
 app = Flask(__name__)
 
-# Инициализация клиента Binance
+# Настройки Binance
 client = Client(
     api_key=os.getenv('BINANCE_API_KEY'),
     api_secret=os.getenv('BINANCE_API_SECRET'),
-    testnet=True  # Используем Testnet API
+    testnet=True
 )
 
 # Список отслеживаемых активов
@@ -24,74 +24,52 @@ ASSETS = [
     'SEI', 'LEDOG', '5IRE', 'STRK', 'SQR', 'AEVO', 'OLAS'
 ]
 
+# Переменная для хранения текущих цен
+current_prices = {f"{asset}USDT": "loading..." for asset in ASSETS}
+
+def update_prices():
+    """Обновление цен каждые 5 секунд"""
+    while True:
+        try:
+            prices = client.get_all_tickers()
+            for asset in ASSETS:
+                pair = f"{asset}USDT"
+                price_data = next((p for p in prices if p['symbol'] == pair), None)
+                if price_data:
+                    current_prices[pair] = price_data['price']
+        except Exception as e:
+            print(f"Error updating prices: {e}")
+        time.sleep(5)
+
+# Запускаем обновление цен в фоне
+thread = threading.Thread(target=update_prices)
+thread.daemon = True
+thread.start()
+
 @app.route('/')
 def home():
-    """Главная страница с инструкцией"""
-    return jsonify({
-        "message": "Binance Testnet Price API",
-        "endpoints": {
-            "/prices": "Get all asset prices",
-            "/price/<symbol>": "Get price for specific asset (e.g. /price/BTCUSDT)"
-        },
-        "available_assets": ASSETS
-    })
-
-@app.route('/prices')
-def get_prices():
-    """Получение цен всех активов"""
-    try:
-        # Получаем все текущие цены с Binance
-        all_prices = client.get_all_tickers()
-        
-        # Фильтруем только нужные нам пары
-        result = []
-        for asset in ASSETS:
-            symbol = f"{asset}USDT"
-            price_data = next(
-                (p for p in all_prices if p['symbol'] == symbol),
-                None
-            )
-            
-            if price_data:
-                result.append({
-                    "symbol": symbol,
-                    "price": price_data["price"],
-                    "timestamp": int(time.time() * 1000)
-                })
-            else:
-                result.append({
-                    "symbol": symbol,
-                    "error": "Trading pair not found",
-                    "timestamp": int(time.time() * 1000)
-                })
-        
-        return jsonify(result)
-    
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "message": "Failed to fetch prices"
-        }), 500
-
-@app.route('/price/<symbol>')
-def get_single_price(symbol):
-    """Получение цены конкретного актива"""
-    try:
-        # Добавляем USDT, если его нет в символе
-        if not symbol.upper().endswith('USDT'):
-            symbol = f"{symbol.upper()}USDT"
-        
-        price = client.get_symbol_ticker(symbol=symbol)
-        return jsonify({
-            "symbol": symbol,
-            "price": price["price"],
-            "timestamp": int(time.time() * 1000)
-        })
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "message": f"Failed to fetch price for {symbol}"
-        }), 400
+    """Главная страница с автообновлением"""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Binance Price Oracle</title>
+        <meta http-equiv="refresh" content="5">
+        <style>
+            body { font-family: Arial; padding: 20px; }
+            .price { font-size: 24px; margin: 10px; padding: 10px; background: #f0f0f0; }
+        </style>
+    </head>
+    <body>
+        <h1>Live Crypto Prices</h1>
+        <p>Updates every 5 seconds</p>
+        {% for pair, price in prices.items() %}
+        <div class="price">{{ pair }}: {{ price }}</div>
+        {% endfor %}
+    </body>
+    </html>
+    """
+    return render_template_string(html, prices=current_prices)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 3000)))
+    app.run(host='0.0.0.0', port=3000)
