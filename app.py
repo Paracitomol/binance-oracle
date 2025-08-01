@@ -2,112 +2,109 @@ import os
 import time
 import threading
 import requests
-import pandas as pd
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify
 from binance.client import Client
 from dotenv import load_dotenv
 from datetime import datetime
 
+# Инициализация
 load_dotenv()
-
 app = Flask(__name__)
 
-ASSETS = [
-    'BTC', 'ETH', 'TWT', 'APT', 'SUI', 'DYDX', '1INCH',
-    'OP', 'ARB', 'C98', 'BNB', 'MNT', 'ICP', 'APE',
-    'AMB', 'HARRY', 'XCH', 'MAS', 'LINA', 'LDO',
-    'SEI', 'LEDOG', '5IRE', 'STRK', 'SQR', 'AEVO', 'OLAS'
-]
+# Конфигурация
+ASSETS = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP']
+UPDATE_INTERVAL = 10  # секунд
+MAX_HISTORY = 100     # записей
 
-# Хранилище цен (только ETH и DEX)
-current_prices = {'ETH': {}, 'DEX': {}}
+# Глобальное хранилище
+current_prices = {'Binance_ETH': {}, 'CMC_DEX': {}}
+price_history = []
 
 def get_cmc_dex_prices():
-    """Получение DEX-котировок через CoinMarketCap"""
+    """Получение цен через CoinMarketCap DEX API"""
     url = "https://pro-api.coinmarketcap.com/v4/dex/spot-pairs/latest"
     headers = {'X-CMC_PRO_API_KEY': os.getenv('COINMARKETCAP_API_KEY')}
-    response = requests.get(url, headers=headers)
-    return response.json()['data'] if response.status_code == 200 else None
+    try:
+        response = requests.get(url, headers=headers)
+        return response.json()['data'] if response.status_code == 200 else None
+    except:
+        return None
 
 def fetch_prices():
-    """Обновление цен ETH-пар и DEX"""
-    prices = {'ETH': {}, 'DEX': {}}
+    """Сбор цен с Binance и CMC"""
+    prices = {'Binance_ETH': {}, 'CMC_DEX': {}}
     
     # Binance ETH-пары
     try:
-        binance_prices = Client(
+        binance = Client(
             api_key=os.getenv('BINANCE_API_KEY'),
             api_secret=os.getenv('BINANCE_API_SECRET'),
             testnet=True
-        ).get_all_tickers()
-        
+        )
+        tickers = binance.get_all_tickers()
         for asset in ASSETS:
             if asset != 'ETH':
                 pair = f"{asset}ETH"
-                price_data = next((p for p in binance_prices if p['symbol'] == pair), None)
-                prices['ETH'][asset] = price_data['price'] if price_data else None
+                price = next((p for p in tickers if p['symbol'] == pair), None)
+                prices['Binance_ETH'][asset] = price['price'] if price else None
     except Exception as e:
-        print(f"Binance ETH pairs error: {e}")
+        print(f"Binance error: {e}")
 
-    # DEX-котировки (ETH-пары)
+    # CMC DEX-пары
     dex_data = get_cmc_dex_prices()
     if dex_data:
         for asset in ASSETS:
-            dex_pair = next(
-                (p for p in dex_data 
-                 if p['base_symbol'] == asset and p['quote_symbol'] == 'ETH'),
-                None
-            )
-            prices['DEX'][asset] = dex_pair['price'] if dex_pair else None
+            pair = next((p for p in dex_data if p['base_symbol'] == asset and p['quote_symbol'] == 'ETH'), None)
+            prices['CMC_DEX'][asset] = pair['price'] if pair else None
 
     return prices
 
-# Фоновое обновление цен
-def price_updater():
+def background_updater():
+    """Фоновая задача обновления цен"""
+    global current_prices, price_history
     while True:
-        global current_prices
-        current_prices = fetch_prices()
-        time.sleep(120)  # Обновление каждые 2 минуты
-
-threading.Thread(target=price_updater, daemon=True).start()
-
-# Логирование в CSV
-def log_prices():
-    while True:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df = pd.DataFrame({
-            'Asset': ASSETS,
-            'Price_ETH': [current_prices['ETH'].get(a) for a in ASSETS],
-            'DEX_Price_ETH': [current_prices['DEX'].get(a) for a in ASSETS],
-            'Timestamp': timestamp
+        new_prices = fetch_prices()
+        current_prices = new_prices
+        price_history.append({
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'prices': new_prices
         })
-        df.to_csv('prices_log.csv', mode='a', header=not os.path.exists('prices_log.csv'), index=False)
-        time.sleep(120)  # Логи каждые 2 минуты
+        # Ограничиваем размер истории
+        if len(price_history) > MAX_HISTORY:
+            price_history.pop(0)
+        time.sleep(UPDATE_INTERVAL)
 
-threading.Thread(target=log_prices, daemon=True).start()
-
-# Маршруты
+# Маршруты API
 @app.route('/')
 def home():
     return jsonify({
+        "status": "active",
         "endpoints": {
-            "/prices": "Все котировки в ETH",
-            "/dex": "DEX-котировки",
-            "/log": "Скачать историю цен"
+            "/prices": "Current prices",
+            "/history": "Price history (last 100 entries)",
+            "/assets": "Supported assets"
         }
     })
 
 @app.route('/prices')
-def get_prices():
-    return jsonify(current_prices['ETH'])
+def prices():
+    return jsonify(current_prices)
 
-@app.route('/dex')
-def get_dex():
-    return jsonify(current_prices['DEX'])
+@app.route('/history')
+def history():
+    return jsonify({
+        "count": len(price_history),
+        "history": price_history
+    })
 
-@app.route('/log')
-def download_log():
-    return send_file('prices_log.csv', as_attachment=True)
+@app.route('/assets')
+def assets():
+    return jsonify({"assets": ASSETS})
+
+# Запуск фонового обновления
+thread = threading.Thread(target=background_updater)
+thread.daemon = True
+thread.start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
