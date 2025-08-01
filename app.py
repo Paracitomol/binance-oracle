@@ -7,104 +7,71 @@ from binance.client import Client
 from dotenv import load_dotenv
 from datetime import datetime
 
-# Инициализация
+# Настройка
 load_dotenv()
 app = Flask(__name__)
 
-# Конфигурация
-ASSETS = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP']
-UPDATE_INTERVAL = 10  # секунд
-MAX_HISTORY = 100     # записей
+ASSETS = [
+    'BTC', 'ETH', 'TWT', 'APT', 'SUI', 'DYDX', '1INCH',
+    'OP', 'ARB', 'C98', 'BNB', 'MNT', 'ICP', 'APE',
+    'AMB', 'HARRY', 'XCH', 'MAS', 'LINA', 'LDO',
+    'SEI', 'LEDOG', '5IRE', 'STRK', 'SQR', 'AEVO', 'OLAS'
+]
 
-# Глобальное хранилище
-current_prices = {'Binance_ETH': {}, 'CMC_DEX': {}}
-price_history = []
+# Хранилище данных
+prices_log = []
+
+def get_binance_prices():
+    """Получаем цены с Binance"""
+    client = Client(
+        os.getenv('BINANCE_API_KEY'),
+        os.getenv('BINANCE_API_SECRET'),
+        testnet=True
+    )
+    return client.get_all_tickers()
 
 def get_cmc_dex_prices():
-    """Получение цен через CoinMarketCap DEX API"""
+    """Получаем цены с CoinMarketCap DEX"""
     url = "https://pro-api.coinmarketcap.com/v4/dex/spot-pairs/latest"
     headers = {'X-CMC_PRO_API_KEY': os.getenv('COINMARKETCAP_API_KEY')}
-    try:
-        response = requests.get(url, headers=headers)
-        return response.json()['data'] if response.status_code == 200 else None
-    except:
-        return None
+    return requests.get(url, headers=headers).json()
 
-def fetch_prices():
-    """Сбор цен с Binance и CMC"""
-    prices = {'Binance_ETH': {}, 'CMC_DEX': {}}
-    
-    # Binance ETH-пары
-    try:
-        binance = Client(
-            api_key=os.getenv('BINANCE_API_KEY'),
-            api_secret=os.getenv('BINANCE_API_SECRET'),
-            testnet=True
-        )
-        tickers = binance.get_all_tickers()
+def save_to_log():
+    """Сохраняем данные в файл"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open('prices_log.csv', 'a') as f:
         for asset in ASSETS:
-            if asset != 'ETH':
-                pair = f"{asset}ETH"
-                price = next((p for p in tickers if p['symbol'] == pair), None)
-                prices['Binance_ETH'][asset] = price['price'] if price else None
-    except Exception as e:
-        print(f"Binance error: {e}")
+            f.write(f"{timestamp},{asset},ETH,{current_prices.get(asset)}\n")
 
-    # CMC DEX-пары
-    dex_data = get_cmc_dex_prices()
-    if dex_data:
-        for asset in ASSETS:
-            pair = next((p for p in dex_data if p['base_symbol'] == asset and p['quote_symbol'] == 'ETH'), None)
-            prices['CMC_DEX'][asset] = pair['price'] if pair else None
-
-    return prices
-
-def background_updater():
-    """Фоновая задача обновления цен"""
-    global current_prices, price_history
+def update_prices():
+    """Обновляем цены каждые 2 минуты"""
     while True:
-        new_prices = fetch_prices()
-        current_prices = new_prices
-        price_history.append({
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
-            'prices': new_prices
-        })
-        # Ограничиваем размер истории
-        if len(price_history) > MAX_HISTORY:
-            price_history.pop(0)
-        time.sleep(UPDATE_INTERVAL)
+        try:
+            # Получаем данные
+            binance_data = get_binance_prices()
+            cmc_data = get_cmc_dex_prices()
+            
+            # Обрабатываем и сохраняем
+            process_prices(binance_data, cmc_data)
+            save_to_log()
+            
+        except Exception as e:
+            print(f"Ошибка: {e}")
+        
+        time.sleep(120)  # 2 минуты
 
-# Маршруты API
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "active",
-        "endpoints": {
-            "/prices": "Current prices",
-            "/history": "Price history (last 100 entries)",
-            "/assets": "Supported assets"
-        }
-    })
-
-@app.route('/prices')
-def prices():
-    return jsonify(current_prices)
-
-@app.route('/history')
-def history():
-    return jsonify({
-        "count": len(price_history),
-        "history": price_history
-    })
-
-@app.route('/assets')
-def assets():
-    return jsonify({"assets": ASSETS})
-
-# Запуск фонового обновления
-thread = threading.Thread(target=background_updater)
+# Запускаем в фоне
+thread = threading.Thread(target=update_prices)
 thread.daemon = True
 thread.start()
 
+@app.route('/')
+def home():
+    return "Crypto Oracle работает! Используйте /prices"
+
+@app.route('/prices')
+def prices():
+    return jsonify(prices_log[-1] if prices_log else {})
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+    app.run(port=3000)
