@@ -1,1 +1,19 @@
+name: Update Prices
 
+on:
+  schedule:
+    - cron: '*/2 * * * *'  # Каждые 2 минуты
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: pip install -r requirements.txt
+      - run: python app.py &
+      - run: sleep 10
+      - run: curl -X POST http://localhost:3000/update
+      - uses: actions/upload-artifact@v2
+        with:
+          name: prices-log
+          path: prices_log.csv
