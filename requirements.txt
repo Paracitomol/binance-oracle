@@ -1,4 +1,6 @@
 ﻿flask
 python-binance
 python-dotenv
-gunicorn  # Для работы на Vercel
+requests
+gunicorn
+pandas
